@@ -4,3 +4,4 @@ pandas
 duckdb
 google-genai
 python-dotenv
+python-multipart
