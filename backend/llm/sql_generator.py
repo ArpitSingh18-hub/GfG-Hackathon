@@ -5,38 +5,44 @@ from backend.services.schema_service import get_schema
 _cache = {}
 
 def clean_sql(sql: str):
-    sql = re.sub(r"```sql", "", sql)
+    sql = re.sub(r"```sql", "", sql, flags=re.IGNORECASE)
     sql = re.sub(r"```", "", sql)
     return sql.strip()
 
-def generate_sql(user_query: str):
-
-    # simple cache so repeated runs don't call Gemini again
-    if user_query in _cache:
-        return _cache[user_query]
+def generate_sql(user_query: str, previous_query: str = None, previous_sql: str = None):
+    cache_key = f"{user_query}_{previous_query}"
+    if cache_key in _cache:
+        return _cache[cache_key]
 
     schema = get_schema()
 
     prompt = f"""
-You are a BI analyst.
+You are an expert BI Data Analyst.
 
 Table name: youtube_data
-
-Columns:
+Columns available:
 {schema}
 
-Convert the user request into SQL.
-
+Task: Convert the user request into a SQL query.
 Rules:
-- Return only SQL
-- No markdown
-- DuckDB syntax
+- Give me ONLY the SQL code, no formatting, no markdown (no ```sql).
+- Use DuckDB syntax.
 """
 
-    sql = ask_gemini(prompt + "\nUser query:\n" + user_query)
+    if previous_query and previous_sql:
+        prompt += f"""
+Context of the conversation (Follow-up):
+Previous Question: {previous_query}
+Previous SQL Query: 
+{previous_sql}
 
+The user's new request is likely a follow-up or modification of the previous question. Base your new query on the previous SQL context if applicable.
+"""
+
+    prompt += f"\nUser Request:\n{user_query}"
+
+    sql = ask_gemini(prompt)
     sql = clean_sql(sql)
 
-    _cache[user_query] = sql
-
+    _cache[cache_key] = sql
     return sql
