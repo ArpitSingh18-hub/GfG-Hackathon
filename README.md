@@ -67,54 +67,22 @@ The API will be available at `http://127.0.0.1:8000`.
 
 ## 📡 API Documentation
 
-### 1. Execute Query (`POST /api/query`)
-Takes a natural language prompt and returns data, chart configuration, and insights.
-
-**Sample Request (Standard):**
+We follow a standardized JSON response format for all endpoints:
 ```json
 {
-  "query": "Show me the top 5 video categories by total views"
+  "success": true,
+  "data": { ... },
+  "error": null,
+  "meta": null
 }
 ```
 
-**Sample Request (Follow-up):**
-```json
-{
-  "query": "Now show only the ones with more than 1 million likes",
-  "previous_query": "Show me the top 5 video categories by total views",
-  "previous_sql": "SELECT category, SUM(views) AS total_views FROM youtube_data GROUP BY category ORDER BY total_views DESC LIMIT 5"
-}
-```
+Detailed API documentation with sample requests and responses for all scenarios can be found here:
+👉 **[Detailed API Documentation](docs/api_documentation.md)**
 
-**Sample JSON Response:**
-```json
-{
-  "user_query": "Show me the top 5 video categories by total views",
-  "generated_sql": "SELECT category, SUM(views) AS total_views FROM youtube_data GROUP BY category ORDER BY total_views DESC LIMIT 5",
-  "data": [
-    { "category": "Vlogs", "total_views": 1850402 },
-    { "category": "Tech", "total_views": 1205300 }
-  ],
-  "chart_info": {
-    "chart_type": "bar",
-    "x_axis": "category",
-    "y_axis": "total_views"
-  },
-  "insight": "Vlogs dominate the platform with over 1.8M views, significantly outpacing Tech content in this segment."
-}
-```
-
-### 2. Upload CSV (`POST /api/upload`)
-Allows users to swap the dataset with their own CSV file.
-
-**Request:** `multipart/form-data` with a `file` field.
-
-**Sample JSON Response:**
-```json
-{
-  "message": "Successfully uploaded business_data.csv and updated the database schema. You can now prompt against your new data!"
-}
-```
+### Quick Reference:
+- **`POST /api/query`**: Process natural language queries.
+- **`POST /api/upload`**: Upload new CSV datasets.
 
 ---
 
