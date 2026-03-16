@@ -31,13 +31,15 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# CORS middleware
+# Enable CORS for all origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
 )
 
 
