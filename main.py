@@ -46,8 +46,8 @@ app.include_router(dashboard_router, prefix="/api")
 app.include_router(upload_router, prefix="/api")
 
 
-# Root endpoint
-@app.get("/")
+# Root endpoint — supports GET and HEAD (HEAD needed for Render health checks)
+@app.api_route("/", methods=["GET", "HEAD"])
 def read_root():
     return {"message": "Welcome to the Conversational BI Dashboard API."}
 
