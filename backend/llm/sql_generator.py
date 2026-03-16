@@ -1,6 +1,7 @@
 import re
 from backend.llm.gemini_client import ask_gemini
 from backend.services.schema_service import get_schema
+from backend.services.table_context import get_table
 
 _cache = {}
 
@@ -14,12 +15,21 @@ def generate_sql(user_query: str, previous_query: str = None, previous_sql: str 
     if cache_key in _cache:
         return _cache[cache_key]
 
+    # get dynamic table name
+    table_name = get_table()
+
+    if not table_name:
+        raise ValueError("No dataset uploaded. Please upload a CSV first.")
+
+
     schema = get_schema()
 
     prompt = f"""
 You are an expert BI Data Analyst.
 
-Table name: youtube_data
+
+
+Table name: {table_name}
 Columns available:
 {schema}
 
