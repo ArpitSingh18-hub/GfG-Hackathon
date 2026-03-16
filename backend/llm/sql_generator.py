@@ -11,16 +11,18 @@ def clean_sql(sql: str):
     return sql.strip()
 
 def generate_sql(user_query: str, previous_query: str = None, previous_sql: str = None):
-    cache_key = f"{user_query}_{previous_query}"
-    if cache_key in _cache:
-        return _cache[cache_key]
-
     # get dynamic table name
     table_name = get_table()
 
     if not table_name:
         raise ValueError("No dataset uploaded. Please upload a CSV first.")
 
+    user_query_norm = user_query.strip().lower() if user_query else "none"
+    prev_query_norm = previous_query.strip().lower() if previous_query else "none"
+    cache_key = f"{table_name}_{user_query_norm}_{prev_query_norm}"
+    
+    if cache_key in _cache:
+        return _cache[cache_key]
 
     schema = get_schema()
 
