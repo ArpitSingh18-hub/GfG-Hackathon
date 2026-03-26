@@ -1,94 +1,256 @@
 import json
 import re
+from typing import List, Dict, Any
 from backend.llm.gemini_client import ask_gemini
 
 _chart_cache = {}
 
-def clean_json(text: str):
+SUPPORTED_CHARTS = ["bar", "line", "pie", "scatter", "table", "number", "area"]
+
+
+def clean_json(text: str) -> str:
+    """Remove markdown wrappers and return clean JSON text"""
+    if not text:
+        return ""
+
     text = re.sub(r"```json", "", text, flags=re.IGNORECASE)
     text = re.sub(r"```", "", text)
     return text.strip()
 
-def select_chart_and_insight(user_query: str, sql: str, columns: list, rows: list):
+
+def is_numeric(value):
+    """Check if value is numeric"""
+    try:
+        float(value)
+        return True
+    except:
+        return False
+
+
+def detect_numeric_columns(rows: List[Dict]) -> List[str]:
+    """Detect numeric columns from sample data"""
+    if not rows:
+        return []
+
+    numeric_cols = []
+
+    for key in rows[0].keys():
+        values = [r.get(key) for r in rows if r.get(key) is not None]
+
+        if values and all(is_numeric(v) for v in values[:5]):
+            numeric_cols.append(key)
+
+    return numeric_cols
+
+
+def rule_based_chart(columns: List[str], rows: List[Dict]) -> str:
+    """
+    Fallback chart selector when LLM fails
+    """
+
+    if not rows:
+        return "table"
+
+    numeric_cols = detect_numeric_columns(rows)
+
+    if len(columns) == 1:
+        return "number"
+
+    if len(columns) == 2 and numeric_cols:
+        return "bar"
+
+    if len(columns) >= 3 and numeric_cols:
+        return "scatter"
+
+    return "table"
+
+
+def validate_axes(chart_info: Dict, columns: List[str], rows: List[Dict]):
+    """
+    Ensure axes exist and make logical sense
+    """
+
+    if not columns:
+        chart_info["x_axis"] = None
+        chart_info["y_axis"] = []
+        return chart_info
+
+    numeric_cols = detect_numeric_columns(rows)
+
+    # Validate X axis
+    x_axis = chart_info.get("x_axis")
+
+    if x_axis not in columns:
+        chart_info["x_axis"] = columns[0]
+
+    # Validate Y axis
+    y_axis = chart_info.get("y_axis", [])
+
+    if isinstance(y_axis, str):
+        y_axis = [y_axis]
+
+    valid_y = [col for col in y_axis if col in columns]
+
+    if not valid_y:
+        if numeric_cols:
+            valid_y = [numeric_cols[0]]
+        elif len(columns) > 1:
+            valid_y = [columns[1]]
+
+    chart_info["y_axis"] = valid_y
+
+    return chart_info
+
+
+def generate_title(x_axis, y_axis):
+    """Generate a descriptive chart title"""
+
+    if not x_axis and not y_axis:
+        return "Data Overview"
+
+    if x_axis and y_axis:
+        return f"{y_axis[0].capitalize()} by {x_axis.capitalize()}"
+
+    if y_axis:
+        return f"{y_axis[0].capitalize()} Analysis"
+
+    return "Data Visualization"
+
+
+def select_chart_and_insight(
+    user_query: str,
+    sql: str,
+    columns: List[str],
+    rows: List[Dict]
+) -> Dict[str, Any]:
+
     cache_key = f"{user_query}_{sql}"
+
     if cache_key in _chart_cache:
         return _chart_cache[cache_key]
 
-    # Truncate sample data to save input tokens
+    # reduce tokens
     truncated_rows = []
+
     for row in (rows[:5] if rows else []):
-        trunc_row = {}
+        r = {}
+
         for k, v in row.items():
             s = str(v)
-            trunc_row[k] = s[:50] + "..." if len(s) > 50 else s
-        truncated_rows.append(trunc_row)
-        
-    sample_data = str(truncated_rows) if truncated_rows else "No data returned."
-    # Also limit massive column lists natively
-    columns_str = ", ".join(columns[:100]) if columns else "none"
-    
-    prompt = f"""
-You are an expert Data Visualization engine and Business Intelligence analyst.
-Based on the user query, the generated SQL, the available columns, and the data sample, do TWO things:
-1. Select the most appropriate chart type for modern frontend libraries like Recharts or Chart.js.
-2. Provide a brief, professional, 1-2 sentence business insight based on the data sample. Do not hallucinate numbers not in the data. Make it sound like an executive summary.
+            r[k] = s[:50] + "..." if len(s) > 50 else s
 
-User Query: {user_query}
-SQL Query: {sql}
-Result Columns: {columns_str}
-Data Sample (first 10 rows):
+        truncated_rows.append(r)
+
+    sample_data = str(truncated_rows) if truncated_rows else "No rows returned."
+
+    columns_str = ", ".join(columns[:50]) if columns else "none"
+
+    prompt = f"""
+You are a Business Intelligence visualization expert.
+
+Analyze the query results and determine:
+
+1. Best chart type
+2. Clear business insight
+3. Descriptive chart title
+
+User Query:
+{user_query}
+
+SQL Query:
+{sql}
+
+Columns:
+{columns_str}
+
+Sample Data:
 {sample_data}
 
-Available chart types: "bar", "line", "pie", "scatter", "table", "number", "area"
+Supported charts:
+bar, line, pie, scatter, table, number, area
 
-Rules for Selection:
-1. If the result is a single number or stat, use "number".
-2. If it's time-series (dates/months on x-axis), use "line" or "area".
-3. If comparing categories against a metric, use "bar".
-4. If showing parts of a whole, use "pie".
-5. If there are many columns or no obvious grouping, default to "table".
+Rules:
 
-Return ONLY valid JSON with this exact structure:
+Single numeric value → number
+
+Time trend → line
+
+Category comparison → bar
+
+Part of whole → pie
+
+Multiple metrics → scatter
+
+Ambiguous data → table
+
+Return ONLY JSON:
+
 {{
-    "chart_type": "...",
-    "x_axis": "column_name for x axis",
-    "y_axis": ["column_name1", "column_name2"],
-    "title": "A descriptive title for the chart",
-    "description": "A brief explanation of why this chart was chosen",
-    "color_palette": ["#8884d8", "#82ca9d", "#ffc658", "#ff8042"],
-    "insight": "Your 1-2 sentence business insight goes here"
+"chart_type": "",
+"x_axis": "",
+"y_axis": [],
+"title": "",
+"description": "",
+"color_palette": ["#636EFA","#EF553B","#00CC96","#AB63FA","#FFA15A"],
+"insight": ""
 }}
-
-Note: y_axis should be a list of column names that represent metrics/values.
-Do NOT output any markdown, only the raw JSON.
 """
-    try:
-        response = ask_gemini(prompt, is_json=True)
-        cleaned = clean_json(response)
-        chart_info = json.loads(cleaned)
-        
-        # Validation
-        if "chart_type" not in chart_info:
-            chart_info["chart_type"] = "table"
-        if "y_axis" not in chart_info:
-            chart_info["y_axis"] = [columns[1]] if len(columns) > 1 else []
-        elif isinstance(chart_info["y_axis"], str):
-            chart_info["y_axis"] = [chart_info["y_axis"]]
 
-        if "insight" not in chart_info:
-            chart_info["insight"] = "No insights could be generated."
+    try:
+
+        response = ask_gemini(prompt, is_json=True)
+
+        cleaned = clean_json(response)
+
+        chart_info = json.loads(cleaned)
+
+        if chart_info.get("chart_type") not in SUPPORTED_CHARTS:
+            chart_info["chart_type"] = rule_based_chart(columns, rows)
+
+        chart_info = validate_axes(chart_info, columns, rows)
+
+        if not chart_info.get("title"):
+            chart_info["title"] = generate_title(
+                chart_info.get("x_axis"),
+                chart_info.get("y_axis")
+            )
+
+        if not chart_info.get("description"):
+            chart_info["description"] = (
+                "This visualization was automatically generated "
+                "to best represent the query results."
+            )
+
+        if not chart_info.get("insight"):
+            chart_info["insight"] = (
+                "This chart summarizes the relationship between the selected variables."
+            )
 
     except Exception as e:
-        print(f"Chart/insight selection error: {e}")
+
+        print("Chart selection failed:", e)
+
+        chart_type = rule_based_chart(columns, rows)
+
+        fallback_x = columns[0] if columns else None
+        fallback_y = [columns[1]] if len(columns) > 1 else []
+
         chart_info = {
-            "chart_type": "table",
-            "x_axis": columns[0] if columns else None,
-            "y_axis": [columns[1]] if len(columns) > 1 else [],
-            "title": "Data Table",
-            "description": "Defaulting to table view due to suggestion error.",
-            "color_palette": ["#8884d8"],
-            "insight": "No insights could be generated."
+            "chart_type": chart_type,
+            "x_axis": fallback_x,
+            "y_axis": fallback_y,
+            "title": generate_title(fallback_x, fallback_y),
+            "description": "Fallback visualization due to AI response failure.",
+            "color_palette": [
+                "#636EFA",
+                "#EF553B",
+                "#00CC96",
+                "#AB63FA",
+                "#FFA15A"
+            ],
+            "insight": "Visualization generated using rule-based analysis."
         }
 
     _chart_cache[cache_key] = chart_info
+
     return chart_info
