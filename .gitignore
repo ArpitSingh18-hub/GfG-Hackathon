@@ -41,5 +41,4 @@ htmlcov/
 # Jupyter
 .ipynb_checkpoints/
 
-# Database
-sales.db
+Add-Content .gitignore "`n*.db`n*.sqlite`n*.sqlite3"
