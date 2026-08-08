@@ -11,14 +11,23 @@ from backend.utils.exceptions import ValidationError, LLMError, DatabaseError
 router = APIRouter()
 
 
+# ============================================================
+# REQUEST MODEL
+# ============================================================
+
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
     previous_query: Optional[str] = None
     previous_sql: Optional[str] = None
 
 
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
 def safe_extract_columns(rows):
-    """Safely extract column names from query result"""
+    """Safely extract column names from query result."""
+
     if not rows:
         return []
 
@@ -29,7 +38,7 @@ def safe_extract_columns(rows):
 
 
 def build_safe_chart(columns, rows):
-    """Fallback chart if AI chart generation fails"""
+    """Fallback chart if AI chart generation fails."""
 
     x_axis = columns[0] if columns else None
     y_axis = [columns[1]] if len(columns) > 1 else []
@@ -50,36 +59,92 @@ def build_safe_chart(columns, rows):
     }
 
 
+# ============================================================
+# DASHBOARD ENDPOINT
+# ============================================================
+
+@router.post("/dashboard")
+def generate_dashboard():
+
+    """
+    Dashboard endpoint.
+
+    The frontend calls /api/dashboard when the Auto Dashboard
+    is refreshed.
+
+    If a dedicated dashboard generator is not available,
+    return a valid empty dashboard response instead of 404.
+
+    The frontend can then use its existing profile-based
+    fallback.
+    """
+
+    try:
+
+        return format_success({
+            "dashboard": {
+                "charts": [],
+                "title": "Auto-Generated Dashboard",
+                "description": (
+                    "Dashboard endpoint available. "
+                    "Profile-based visualization can be used "
+                    "when no dedicated dashboard generator is configured."
+                )
+            }
+        })
+
+    except Exception as e:
+
+        return format_error(
+            f"Dashboard generation failed: {str(e)}"
+        )
+
+
+# ============================================================
+# QUERY ENDPOINT
+# ============================================================
+
 @router.post("/query")
 def run_query(req: QueryRequest):
 
     try:
 
-        # ---------------------------
-        # 1️⃣ Generate SQL
-        # ---------------------------
+        # ----------------------------------------------------
+        # 1. Generate SQL
+        # ----------------------------------------------------
 
         try:
-            sql = generate_sql(req.query, req.previous_query, req.previous_sql)
+
+            sql = generate_sql(
+                req.query,
+                req.previous_query,
+                req.previous_sql
+            )
 
         except Exception as e:
 
             if "No dataset uploaded" in str(e):
                 raise ValidationError(str(e))
 
-            raise LLMError(f"Failed to generate SQL: {str(e)}")
+            raise LLMError(
+                f"Failed to generate SQL: {str(e)}"
+            )
 
-        # ---------------------------
-        # 2️⃣ Execute SQL
-        # ---------------------------
+        # ----------------------------------------------------
+        # 2. Execute SQL
+        # ----------------------------------------------------
 
         try:
+
             result = execute_query(sql)
 
         except Exception as e:
-            raise DatabaseError(f"Database execution failed: {str(e)}")
 
-        # Database service may return error dict
+            raise DatabaseError(
+                f"Database execution failed: {str(e)}"
+            )
+
+        # Database service may return an error dictionary
         if isinstance(result, dict) and "error" in result:
 
             return format_error(
@@ -90,16 +155,21 @@ def run_query(req: QueryRequest):
                 }
             )
 
-        # ---------------------------
-        # 3️⃣ Extract data safely
-        # ---------------------------
+        # ----------------------------------------------------
+        # 3. Extract data safely
+        # ----------------------------------------------------
 
-        rows = result.get("data", []) if isinstance(result, dict) else result
+        rows = (
+            result.get("data", [])
+            if isinstance(result, dict)
+            else result
+        )
+
         columns = safe_extract_columns(rows)
 
-        # ---------------------------
-        # 4️⃣ Chart Selection
-        # ---------------------------
+        # ----------------------------------------------------
+        # 4. Chart Selection
+        # ----------------------------------------------------
 
         try:
 
@@ -121,27 +191,56 @@ def run_query(req: QueryRequest):
 
         except Exception:
 
-            chart_info = build_safe_chart(columns, rows)
+            chart_info = build_safe_chart(
+                columns,
+                rows
+            )
 
             insight = "No insights could be generated."
 
-        # ---------------------------
-        # 5️⃣ Validate chart fields
-        # ---------------------------
+        # ----------------------------------------------------
+        # 5. Validate chart fields
+        # ----------------------------------------------------
 
-        chart_info.setdefault("chart_type", "table")
-        chart_info.setdefault("x_axis", columns[0] if columns else None)
-        chart_info.setdefault("y_axis", [columns[1]] if len(columns) > 1 else [])
-        chart_info.setdefault("title", "Data Visualization")
-        chart_info.setdefault("description", "Auto generated visualization.")
         chart_info.setdefault(
-            "color_palette",
-            ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A"]
+            "chart_type",
+            "table"
         )
 
-        # ---------------------------
-        # 6️⃣ Build Response
-        # ---------------------------
+        chart_info.setdefault(
+            "x_axis",
+            columns[0] if columns else None
+        )
+
+        chart_info.setdefault(
+            "y_axis",
+            [columns[1]] if len(columns) > 1 else []
+        )
+
+        chart_info.setdefault(
+            "title",
+            "Data Visualization"
+        )
+
+        chart_info.setdefault(
+            "description",
+            "Auto generated visualization."
+        )
+
+        chart_info.setdefault(
+            "color_palette",
+            [
+                "#636EFA",
+                "#EF553B",
+                "#00CC96",
+                "#AB63FA",
+                "#FFA15A"
+            ]
+        )
+
+        # ----------------------------------------------------
+        # 6. Build Response
+        # ----------------------------------------------------
 
         response_data = {
 
@@ -165,8 +264,16 @@ def run_query(req: QueryRequest):
 
         return format_success(response_data)
 
-    except (ValidationError, LLMError, DatabaseError) as e:
+    except (
+        ValidationError,
+        LLMError,
+        DatabaseError
+    ) as e:
+
         raise e
 
     except Exception as e:
-        return format_error(f"Unexpected server error: {str(e)}")
+
+        return format_error(
+            f"Unexpected server error: {str(e)}"
+        )
